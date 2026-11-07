@@ -1,0 +1,48 @@
+import { NextRequest } from "next/server";
+import { Types } from "mongoose";
+
+import { requireAuth } from "@/lib/authorization";
+import { connectToDatabase } from "@/lib/db";
+import { fail, ok } from "@/lib/http";
+import { AppointmentModel } from "@/models/appointment";
+import { appointmentStatusSchema } from "@/schemas/request";
+
+type Context = {
+  params: Promise<{ id: string }>;
+};
+
+export async function PATCH(request: NextRequest, context: Context) {
+  const auth = await requireAuth(request, ["BLOOD_BANK_ADMIN", "SUPER_ADMIN", "CITY_ADMIN"]);
+  if ("error" in auth) {
+    return fail(auth.error, auth.error === "Unauthorized" ? 401 : 403);
+  }
+
+  const { id } = await context.params;
+  if (!Types.ObjectId.isValid(id)) {
+    return fail("Invalid appointment id", 400);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return fail("Invalid JSON payload", 400);
+  }
+
+  const parsed = appointmentStatusSchema.safeParse(body);
+  if (!parsed.success) {
+    return fail("Validation failed", 422, { issues: parsed.error.flatten() });
+  }
+
+  await connectToDatabase();
+  const updated = await AppointmentModel.findByIdAndUpdate(
+    id,
+    { $set: { status: parsed.data.status } },
+    { new: true },
+  );
+  if (!updated) {
+    return fail("Appointment not found", 404);
+  }
+
+  return ok({ appointment: updated });
+}
